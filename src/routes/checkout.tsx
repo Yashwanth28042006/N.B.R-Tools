@@ -48,7 +48,7 @@ function CheckoutPage() {
     setPaying(true);
     try {
       await new Promise((resolve) => setTimeout(resolve, 1400));
-      const orderId = await placeOrder(items, totals, method);
+      const orderId = await placeOrder(items, method);
       toast.success("Payment successful — order placed!");
       navigate({ to: "/orders", search: { placed: orderId } });
     } catch (error) {

@@ -92,20 +92,22 @@ function AccountPage() {
               <Input
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="Password (minimum 6 characters)"
+                placeholder="Password (minimum 8 characters)"
                 type="password"
                 autoComplete="current-password"
                 required
               />
               <Button
-                disabled={loading || !username || password.length < 6}
+                disabled={loading || !username || password.length < 8}
                 onClick={() => submit("sign-in")}
                 className="w-full bg-amber text-amber-foreground hover:bg-amber/90"
               >
                 Sign in
               </Button>
               <Button
-                disabled={loading || !username || password.length < 6}
+                disabled={
+                  loading || !/^[a-zA-Z0-9_.-]{3,32}$/.test(username) || password.length < 8
+                }
                 onClick={() => submit("sign-up")}
                 variant="outline"
                 className="w-full"

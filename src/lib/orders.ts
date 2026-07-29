@@ -1,8 +1,22 @@
 import { supabase } from "@/integrations/supabase/client";
+import { placeOrderSecure } from "./order.functions";
 import type { CartItem } from "./cart";
-import type { cartTotals } from "./cart";
 
 export type PaymentMethod = "upi" | "card" | "netbanking" | "cod";
+
+export type DeliveryStage = "processing" | "out_for_delivery" | "delivered";
+
+const PROCESSING_MINUTES = 1;
+const OUT_FOR_DELIVERY_MINUTES = 3;
+
+// Simulated delivery progress, derived purely from elapsed time since the
+// order was placed - there's no dispatch/logistics backend behind this yet.
+export function deliveryStage(createdAt: string): DeliveryStage {
+  const minutesElapsed = (Date.now() - new Date(createdAt).getTime()) / 60_000;
+  if (minutesElapsed < PROCESSING_MINUTES) return "processing";
+  if (minutesElapsed < OUT_FOR_DELIVERY_MINUTES) return "out_for_delivery";
+  return "delivered";
+}
 
 export type Order = {
   id: string;
@@ -28,50 +42,24 @@ export type Order = {
   }>;
 };
 
-export async function placeOrder(
-  items: CartItem[],
-  totals: ReturnType<typeof cartTotals>,
-  paymentMethod: PaymentMethod,
-): Promise<string> {
-  const { data: session } = await supabase.auth.getSession();
-  const userId = session.session?.user.id;
-  if (!userId) throw new Error("You must be signed in to place an order.");
+export async function placeOrder(items: CartItem[], paymentMethod: PaymentMethod): Promise<string> {
   if (!items.length) throw new Error("Your cart is empty.");
 
-  const { data: order, error: orderError } = await supabase
-    .from("orders")
-    .insert({
-      user_id: userId,
-      payment_method: paymentMethod,
-      status: "paid",
-      subtotal: totals.subtotal,
-      gst: totals.gst,
-      delivery: totals.delivery,
-      deposits: totals.deposits,
-      total: totals.total,
-    })
-    .select("id")
-    .single();
-  if (orderError || !order) throw new Error(orderError?.message ?? "Could not create order.");
-
-  const { error: itemsError } = await supabase.from("order_items").insert(
-    items.map((item) => ({
-      order_id: order.id,
-      user_id: userId,
-      product_id: item.id,
-      name: item.name,
-      image: item.image,
-      brand: item.brand,
-      mode: item.mode,
-      qty: item.qty,
-      days: item.days,
-      unit_price: item.unitPrice,
-      deposit: item.deposit,
-    })),
-  );
-  if (itemsError) throw new Error(itemsError.message);
-
-  return order.id as string;
+  // Only product id/mode/qty/days are sent - the server re-derives every
+  // price from the product catalog itself, so a tampered client can't
+  // dictate what an order is recorded as costing.
+  const { orderId } = await placeOrderSecure({
+    data: {
+      items: items.map((item) => ({
+        productId: item.id,
+        mode: item.mode,
+        qty: item.qty,
+        days: item.days,
+      })),
+      paymentMethod,
+    },
+  });
+  return orderId;
 }
 
 export async function listOrders(): Promise<Order[]> {

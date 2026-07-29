@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { getProduct, type Product } from "./products";
+import { getProductById, type Product } from "./products";
 import { supabase } from "@/integrations/supabase/client";
 
 export type CartItem = {
@@ -18,16 +18,16 @@ export type CartItem = {
 const KEY = "nbr-cart-v1";
 const listeners = new Set<() => void>();
 let ownerId: string | undefined;
-let cache: CartItem[] = load();
+let cache: CartItem[] = load(ownerId);
 
-function storageKey() {
-  return ownerId ? `${KEY}:${ownerId}` : KEY;
+function storageKey(forOwnerId: string | undefined) {
+  return forOwnerId ? `${KEY}:${forOwnerId}` : KEY;
 }
 
-function load(): CartItem[] {
+function load(forOwnerId: string | undefined): CartItem[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(storageKey());
+    const raw = window.localStorage.getItem(storageKey(forOwnerId));
     return raw ? (JSON.parse(raw) as CartItem[]) : [];
   } catch {
     return [];
@@ -37,7 +37,7 @@ function load(): CartItem[] {
 function persist() {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(storageKey(), JSON.stringify(cache));
+    window.localStorage.setItem(storageKey(ownerId), JSON.stringify(cache));
   } catch {
     /* ignore quota */
   }
@@ -66,8 +66,9 @@ async function hydrateRemoteCart() {
     .select("product_id, mode, qty, days")
     .eq("user_id", ownerId);
   if (error || !data?.length) return;
-  cache = data.flatMap((row) => {
-    const product = getProduct(row.product_id);
+
+  const remoteItems = data.flatMap((row) => {
+    const product = getProductById(row.product_id);
     if (!product || (row.mode !== "rent" && row.mode !== "buy")) return [];
     return [
       {
@@ -84,12 +85,42 @@ async function hydrateRemoteCart() {
       } satisfies CartItem,
     ];
   });
-  persist();
+
+  // Merge rather than replace: a locally-added item may not have synced to
+  // the server yet, and this fetch shouldn't be able to make it disappear.
+  const merged = [...cache];
+  remoteItems.forEach((item) => {
+    const existing = merged.find((c) => c.id === item.id && c.mode === item.mode);
+    if (!existing) merged.push(item);
+  });
+  cache = merged;
+  listeners.forEach((l) => l());
 }
 
 export function setCartOwner(userId?: string) {
+  if (userId === ownerId) return; // avoid discarding just-added items on redundant calls
+  const previousOwnerId = ownerId;
   ownerId = userId;
-  cache = load();
+
+  if (userId && !previousOwnerId) {
+    // Guest -> signed-in transition: merge the guest cart into the user's
+    // cart instead of losing whatever was added before sign-in resolved.
+    const guestItems = load(undefined);
+    const userItems = load(userId);
+    guestItems.forEach((item) => {
+      const existing = userItems.find((c) => c.id === item.id && c.mode === item.mode);
+      if (existing) existing.qty += item.qty;
+      else userItems.push(item);
+    });
+    cache = userItems;
+    if (guestItems.length) {
+      window.localStorage.removeItem(storageKey(undefined));
+      persist();
+    }
+  } else {
+    cache = load(userId);
+  }
+
   listeners.forEach((listener) => listener());
   if (ownerId) void hydrateRemoteCart();
 }

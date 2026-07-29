@@ -5,10 +5,10 @@ import { useEffect, useState } from "react";
 import { Header } from "@/components/site/Header";
 import { Footer } from "@/components/site/Footer";
 import { Button } from "@/components/ui/button";
-import { listOrders, type Order } from "@/lib/orders";
+import { listOrders, deliveryStage, type Order, type DeliveryStage } from "@/lib/orders";
 import { getProductById } from "@/lib/products";
 import { supabase } from "@/integrations/supabase/client";
-import { Package, ShoppingBag } from "lucide-react";
+import { Package, ShoppingBag, Truck, CheckCircle2 } from "lucide-react";
 
 const searchSchema = z.object({
   placed: fallback(z.string(), "").default(""),
@@ -29,10 +29,47 @@ const METHOD_LABEL: Record<string, string> = {
   cod: "Cash on Delivery",
 };
 
+const STAGES: Array<{ key: DeliveryStage; label: string }> = [
+  { key: "processing", label: "Processing" },
+  { key: "out_for_delivery", label: "Out for delivery" },
+  { key: "delivered", label: "Delivered" },
+];
+
+function DeliveryTracker({ createdAt }: { createdAt: string }) {
+  const stage = deliveryStage(createdAt);
+  const activeIndex = STAGES.findIndex((s) => s.key === stage);
+
+  return (
+    <div className="flex items-center gap-1.5 sm:gap-2">
+      {STAGES.map((s, i) => {
+        const done = i <= activeIndex;
+        const Icon =
+          s.key === "processing" ? Package : s.key === "out_for_delivery" ? Truck : CheckCircle2;
+        return (
+          <div key={s.key} className="flex items-center gap-1.5 sm:gap-2">
+            <div
+              className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold sm:text-xs ${
+                done ? "bg-success/15 text-success" : "bg-secondary text-muted-foreground"
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {s.label}
+            </div>
+            {i < STAGES.length - 1 && (
+              <div className={`h-0.5 w-4 sm:w-8 ${i < activeIndex ? "bg-success" : "bg-border"}`} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function OrdersPage() {
   const { placed } = Route.useSearch();
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [orders, setOrders] = useState<Order[] | null>(null);
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -40,6 +77,13 @@ function OrdersPage() {
       setSignedIn(hasSession);
       if (hasSession) listOrders().then(setOrders);
     });
+  }, []);
+
+  // Re-render periodically so the simulated delivery stage progresses live
+  // without needing a manual page refresh.
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 10_000);
+    return () => clearInterval(id);
   }, []);
 
   return (
@@ -87,10 +131,13 @@ function OrdersPage() {
                       </div>
                     </div>
                   </div>
-                  <span className="inline-flex rounded-full bg-amber/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber">
-                    {order.status}
-                  </span>
+                  <DeliveryTracker createdAt={order.createdAt} />
                 </div>
+                {deliveryStage(order.createdAt) === "delivered" && (
+                  <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-success">
+                    <CheckCircle2 className="h-4 w-4" /> Your order has been delivered.
+                  </p>
+                )}
 
                 <div className="mt-4 space-y-3">
                   {order.items.map((item) => {
